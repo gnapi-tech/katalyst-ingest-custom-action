@@ -1,0 +1,108 @@
+name: 'Katalyst Test Ingest'
+description: 'Uploads JUnit and LCOV reports to Katalyst ingestion API'
+
+inputs:
+    katalyst_base_url:
+        description: 'Base URL of Katalyst API, e.g. https://example.com'
+        required: true
+
+    ingest_token:
+        description: 'Bearer token for Katalyst ingestion API'
+        required: true
+
+    project_id:
+        description: 'Katalyst project ID'
+        required: true
+
+    junit_path:
+        description: 'Path to JUnit XML report'
+        required: false
+        default: 'junit.xml'
+
+    lcov_path:
+        description: 'Path to LCOV report'
+        required: false
+        default: 'coverage/lcov.info'
+
+    endpoint:
+        description: 'Ingest endpoint path'
+        required: false
+        default: '/ingest/runs'
+
+    branch:
+        description: 'Git branch name'
+        required: false
+        default: ''
+
+    commit_sha:
+        description: 'Git commit SHA'
+        required: false
+        default: ''
+
+    repo_name:
+        description: 'GitHub repository name'
+        required: false
+        default: ''
+
+runs:
+    using: 'composite'
+    steps:
+        - name: Validate inputs and files
+          shell: bash
+          run: |
+              set -euo pipefail
+
+              BASE="${{ inputs.katalyst_base_url }}"
+              JUNIT="${{ inputs.junit_path }}"
+              LCOV="${{ inputs.lcov_path }}"
+
+              if [ -z "$BASE" ]; then
+                echo "katalyst_base_url is required"
+                exit 1
+              fi
+
+              if [ ! -f "$JUNIT" ]; then
+                echo "JUnit report not found: $JUNIT"
+                exit 1
+              fi
+
+              if [ ! -f "$LCOV" ]; then
+                echo "LCOV report not found: $LCOV"
+                exit 1
+              fi
+
+              echo "Found JUnit report: $JUNIT"
+              echo "Found LCOV report: $LCOV"
+
+        - name: Upload reports to Katalyst
+          shell: bash
+          env:
+              INPUT_BRANCH: ${{ inputs.branch }}
+              INPUT_COMMIT: ${{ inputs.commit_sha }}
+              INPUT_REPO: ${{ inputs.repo_name }}
+          run: |
+              set -euo pipefail
+
+              BASE="${{ inputs.katalyst_base_url }}"
+              BASE="${BASE%/}"
+              ENDPOINT="${{ inputs.endpoint }}"
+
+              BRANCH="${INPUT_BRANCH:-${GITHUB_REF_NAME:-}}"
+              COMMIT="${INPUT_COMMIT:-${GITHUB_SHA:-}}"
+              REPO="${INPUT_REPO:-${GITHUB_REPOSITORY:-}}"
+
+              echo "Uploading to: $BASE$ENDPOINT"
+              echo "Project ID: ${{ inputs.project_id }}"
+              echo "Branch: $BRANCH"
+              echo "Commit: $COMMIT"
+              echo "Repo: $REPO"
+
+              curl -sS --fail-with-body --retry 3 --retry-delay 2 \
+                -X POST "$BASE$ENDPOINT" \
+                -H "Authorization: Bearer ${{ inputs.ingest_token }}" \
+                -F "projectId=${{ inputs.project_id }}" \
+                -F "branch=$BRANCH" \
+                -F "commit=$COMMIT" \
+                -F "repo=$REPO" \
+                -F "junit=@${{ inputs.junit_path }}" \
+                -F "lcov=@${{ inputs.lcov_path }}"
