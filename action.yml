@@ -87,7 +87,7 @@ runs:
               BASE="${BASE%/}"
               ENDPOINT="${{ inputs.endpoint }}"
 
-              BRANCH="${INPUT_BRANCH:-${GITHUB_REF_NAME:-}}"
+              BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
               COMMIT="${INPUT_COMMIT:-${GITHUB_SHA:-}}"
               REPO="${INPUT_REPO:-${GITHUB_REPOSITORY:-}}"
 
