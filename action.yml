@@ -12,7 +12,8 @@ inputs:
 
     project_id:
         description: 'Katalyst project ID'
-        required: true
+        required: false
+        default: ''
 
     junit_path:
         description: 'Path to JUnit XML report'
@@ -92,7 +93,6 @@ runs:
               REPO="${INPUT_REPO:-${GITHUB_REPOSITORY:-}}"
 
               echo "Uploading to: $BASE$ENDPOINT"
-              echo "Project ID: ${{ inputs.project_id }}"
               echo "Branch: $BRANCH"
               echo "Commit: $COMMIT"
               echo "Repo: $REPO"
@@ -100,7 +100,6 @@ runs:
               curl -sS --fail-with-body --retry 3 --retry-delay 2 \
                 -X POST "$BASE$ENDPOINT" \
                 -H "Authorization: Bearer ${{ inputs.ingest_token }}" \
-                -F "projectId=${{ inputs.project_id }}" \
                 -F "branch=$BRANCH" \
                 -F "commit=$COMMIT" \
                 -F "repo=$REPO" \
