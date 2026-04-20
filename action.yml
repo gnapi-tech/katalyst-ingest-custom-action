@@ -86,7 +86,7 @@ runs:
             report_paths: ${{ inputs.junit_path }}
             token: ${{ inputs.github_token }}
             check_name: "Katalyst Test Report"
-            file_on_failure: false
+            fail_on_failure: false
 
         - name: Publish Code Coverage Comment
           uses: zgosalvez/github-actions-report-lcov@v4
@@ -96,6 +96,10 @@ runs:
             minimum-coverage: 0
             github-token: ${{ inputs.github_token }}
             
+        - name: Demonstrate Inline File Annotation
+          shell: bash
+          run: |
+            echo "::error file=src/customerStore.js,line=7,title=Katalyst Quality Check::This line was flagged by Katalyst! (Intentional demo annotation)"
         - name: Upload reports to Katalyst
           shell: bash
           env:
