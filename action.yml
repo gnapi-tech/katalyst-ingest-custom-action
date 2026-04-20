@@ -10,6 +10,10 @@ inputs:
         description: 'Bearer token for Katalyst ingestion API'
         required: true
 
+    github_token:
+        description: 'GitHub token for PR comments and checks'
+        required: false
+
     project_id:
         description: 'Katalyst project ID'
         required: false
@@ -75,6 +79,23 @@ runs:
               echo "Found JUnit report: $JUNIT"
               echo "Found LCOV report: $LCOV"
 
+        - name: Publish Test Report Automation
+          uses: mikepenz/action-junit-report@v4
+          if: always()
+          with:
+            report_paths: ${{ inputs.junit_path }}
+            token: ${{ inputs.github_token }}
+            check_name: "Katalyst Test Report"
+            file_on_failure: false
+
+        - name: Publish Code Coverage Comment
+          uses: zgosalvez/github-actions-report-lcov@v4
+          if: github.event_name == 'pull_request' && always()
+          with:
+            coverage-files: ${{ inputs.lcov_path }}
+            minimum-coverage: 0
+            github-token: ${{ inputs.github_token }}
+            
         - name: Upload reports to Katalyst
           shell: bash
           env:
