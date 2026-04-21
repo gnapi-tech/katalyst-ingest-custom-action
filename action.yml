@@ -79,14 +79,14 @@ runs:
               echo "Found JUnit report: $JUNIT"
               echo "Found LCOV report: $LCOV"
 
-        - name: Publish Test Report to PR
-          uses: EnricoMi/publish-unit-test-result-action@v2
+        - name: Publish Test Report Automation
+          uses: mikepenz/action-junit-report@v4
           if: always()
           with:
-            files: ${{ inputs.junit_path }}
-            github_token: ${{ inputs.github_token }}
+            report_paths: ${{ inputs.junit_path }}
+            token: ${{ inputs.github_token }}
             check_name: "Katalyst Test Report"
-            comment_mode: "always"
+            fail_on_failure: false
 
         - name: Publish Code Coverage Comment
           uses: zgosalvez/github-actions-report-lcov@v4
@@ -95,6 +95,26 @@ runs:
             coverage-files: ${{ inputs.lcov_path }}
             minimum-coverage: 0
             github-token: ${{ inputs.github_token }}
+            
+        - name: Read Katalyst Smells Automatically
+          shell: bash
+          run: |
+            if [ -f "katalyst-smells.json" ]; then
+              echo "Parsing smells from katalyst-smells.json..."
+              # Using jq to read a JSON report containing { file, line, title, message, severity }
+              jq -c '.[]' katalyst-smells.json | while read -r issue; do
+                FILE=$(echo "$issue" | jq -r '.file')
+                LINE=$(echo "$issue" | jq -r '.line')
+                TITLE=$(echo "$issue" | jq -r '.title')
+                MSG=$(echo "$issue" | jq -r '.message')
+                SEVERITY=$(echo "$issue" | jq -r '.severity // "error"')
+                
+                # Dynamically generate the annotation
+                echo "::$SEVERITY file=$FILE,line=$LINE,title=$TITLE::$MSG"
+              done
+            else
+              echo "katalyst-smells.json not found, skipping dynamic annotations. (Ensure your workflow creates this file first!)"
+            fi
         - name: Upload reports to Katalyst
           shell: bash
           env:
