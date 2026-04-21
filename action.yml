@@ -99,7 +99,11 @@ runs:
         - name: Demonstrate Inline File Annotation
           shell: bash
           run: |
-            echo "::error file=src/customerStore.js,line=7,title=Katalyst Quality Check::This line was flagged by Katalyst! (Intentional demo annotation)"
+            echo "::error file=src/customerStore.js,line=7,title=Katalyst Code Smells::This error string has been modified; it will break unit tests."
+            echo "::warning file=src/customerStore.js,line=17,title=Katalyst Security Check::Input 'id' should be sanitized to prevent injection attacks."
+            echo "::error file=src/customerStore.js,line=33,title=Katalyst Consistency Check::Mismatched error string formatting detected here."
+            echo "::notice file=src/customerStore.js,line=46,title=Katalyst Performance::Array.from() on a large Map may cause memory constraints."
+            echo "::notice file=.github/workflows/ci.yml,line=14,title=Katalyst Actions Scorer::'actions/checkout@v4' is currently up to date, great job!"
         - name: Upload reports to Katalyst
           shell: bash
           env:
