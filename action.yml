@@ -147,3 +147,18 @@ runs:
                 -F "repo=$REPO" \
                 -F "junit=@${{ inputs.junit_path }}" \
                 -F "lcov=@${{ inputs.lcov_path }}"
+
+        - name: Add Dashboard Link to Summary
+          shell: bash
+          if: always()
+          env:
+              INPUT_PROJECT_ID: ${{ inputs.project_id }}
+              INPUT_BRANCH: ${{ inputs.branch }}
+          run: |
+              PROJECT_ID="$INPUT_PROJECT_ID"
+              BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
+              
+              if [ -n "$PROJECT_ID" ]; then
+                echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+              fi
