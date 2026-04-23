@@ -115,12 +115,7 @@ runs:
                 echo "::$SEVERITY file=$FILE,line=$LINE,title=$TITLE::$MSG"
               done
             else
-              echo "katalyst-smells.json not found! Falling back to demo annotations for PR..."
-              echo "::error file=src/customerStore.js,line=7,title=Katalyst Code Smells::This error string has been modified; it will break unit tests."
-              echo "::warning file=src/customerStore.js,line=17,title=Katalyst Security Check::Input 'id' should be sanitized to prevent injection attacks."
-              echo "::error file=src/customerStore.js,line=33,title=Katalyst Consistency Check::Mismatched error string formatting detected here."
-              echo "::notice file=src/customerStore.js,line=46,title=Katalyst Performance::Array.from() on a large Map may cause memory constraints."
-              echo "::notice file=.github/workflows/ci.yml,line=14,title=Katalyst Actions Scorer::'actions/checkout@v4' is currently up to date, great job!"
+              echo "katalyst-smells.json not found! Skipping dynamic code smell annotations."
             fi
         - name: Upload reports to Katalyst
           shell: bash
@@ -152,3 +147,18 @@ runs:
                 -F "repo=$REPO" \
                 -F "junit=@${{ inputs.junit_path }}" \
                 -F "lcov=@${{ inputs.lcov_path }}"
+
+        - name: Add Dashboard Link to Summary
+          shell: bash
+          if: always()
+          env:
+              INPUT_PROJECT_ID: ${{ inputs.project_id }}
+              INPUT_BRANCH: ${{ inputs.branch }}
+          run: |
+              PROJECT_ID="$INPUT_PROJECT_ID"
+              BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
+              
+              if [ -n "$PROJECT_ID" ]; then
+                echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+              fi
