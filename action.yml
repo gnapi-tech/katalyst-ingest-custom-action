@@ -146,19 +146,44 @@ runs:
                 -F "commit=$COMMIT" \
                 -F "repo=$REPO" \
                 -F "junit=@${{ inputs.junit_path }}" \
-                -F "lcov=@${{ inputs.lcov_path }}"
+                -F "lcov=@${{ inputs.lcov_path }}" > katalyst-response.json
+              
+              cat katalyst-response.json
+              
+              # Extract projectId from response
+              EXTRACTED_PROJECT_ID=$(jq -r '.projectId // empty' katalyst-response.json)
+              if [ -n "$EXTRACTED_PROJECT_ID" ]; then
+                echo "api_project_id=$EXTRACTED_PROJECT_ID" >> $GITHUB_ENV
+              fi
 
-        - name: Add Dashboard Link to Summary
+        - name: Add Dashboard Link to Summary and PR
           shell: bash
           if: always()
           env:
               INPUT_PROJECT_ID: ${{ inputs.project_id }}
               INPUT_BRANCH: ${{ inputs.branch }}
+              GH_TOKEN: ${{ inputs.github_token }}
+              PR_NUMBER: ${{ github.event.pull_request.number }}
           run: |
-              PROJECT_ID="$INPUT_PROJECT_ID"
+              PROJECT_ID="${api_project_id:-$INPUT_PROJECT_ID}"
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
               
               if [ -n "$PROJECT_ID" ]; then
+                # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
                 echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+                
+                # Check if it's a PR and we have a token
+                if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
+                  COMMENT_BODY="### 📊 Katalyst Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**"
+
+                  # Find existing comment
+                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Katalyst Dashboard")) | .id' | tail -n 1)
+                  
+                  if [ -n "$COMMENT_ID" ]; then
+                    gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
+                  else
+                    gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
+                  fi
+                fi
               fi
