@@ -169,16 +169,22 @@ runs:
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
               
               if [ -n "$PROJECT_ID" ]; then
+                # URL Encode the path to be used as a redirect parameter
+                COVERAGE_PATH="/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
+                # Simple url encoding in bash
+                ENCODED_PATH=$(echo "$COVERAGE_PATH" | jq -sRr @uri)
+                FULL_URL="http://localhost:4200/?redirect=$ENCODED_PATH"
+
                 # Write to GITHUB_STEP_SUMMARY
-                echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+                echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
                 
                 # Check if it's a PR and we have a token
                 if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY="### 📊 Katalyst Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**"
+                  COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**"
 
                   # Find existing comment
-                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Katalyst Dashboard")) | .id' | tail -n 1)
+                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' | tail -n 1)
                   
                   if [ -n "$COMMENT_ID" ]; then
                     gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
