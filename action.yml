@@ -179,12 +179,13 @@ runs:
           shell: bash
           if: always()
           env:
+              API_PROJECT_ID: ${{ env.api_project_id }}
               INPUT_PROJECT_ID: ${{ inputs.project_id }}
               INPUT_BRANCH: ${{ inputs.branch }}
               GH_TOKEN: ${{ inputs.github_token }}
               PR_NUMBER: ${{ github.event.pull_request.number }}
           run: |
-              PROJECT_ID="${api_project_id:-$INPUT_PROJECT_ID}"
+              PROJECT_ID="${API_PROJECT_ID:-$INPUT_PROJECT_ID}"
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
               
               echo "DEBUG: api_project_id='$api_project_id'"
@@ -205,9 +206,9 @@ runs:
                 
                 # Check if it's a PR and we have a token. If it's a push event, PR_NUMBER might be empty, so try to find it.
                 if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
-                  echo "PR_NUMBER is empty, attempting to find open PR for branch '$BRANCH'..."
-                  PR_NUMBER=$(gh pr list --head "$BRANCH" --json number -q '.[0].number' || echo "")
-                  echo "Found PR_NUMBER via gh cli: '$PR_NUMBER'"
+                  echo "PR_NUMBER is empty, attempting to find open PR for commit '$COMMIT'..."
+                  PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/$COMMIT/pulls --jq '.[0].number' || echo "")
+                  echo "Found PR_NUMBER via gh api: '$PR_NUMBER'"
                 fi
 
                 echo "DEBUG: Final PR_NUMBER='$PR_NUMBER'"
