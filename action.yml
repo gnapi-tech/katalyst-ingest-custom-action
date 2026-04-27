@@ -68,16 +68,17 @@ runs:
 
               if [ ! -f "$JUNIT" ]; then
                 echo "JUnit report not found: $JUNIT"
+                # Backend requires junit, so we should fail if it's completely missing
                 exit 1
               fi
 
               if [ ! -f "$LCOV" ]; then
-                echo "LCOV report not found: $LCOV"
-                exit 1
+                echo "LCOV report not found: $LCOV. Proceeding without LCOV."
+              else
+                echo "Found LCOV report: $LCOV"
               fi
 
               echo "Found JUnit report: $JUNIT"
-              echo "Found LCOV report: $LCOV"
 
         - name: Publish Test Report Automation
           uses: mikepenz/action-junit-report@v4
@@ -119,6 +120,7 @@ runs:
             fi
         - name: Upload reports to Katalyst
           shell: bash
+          if: always()
           env:
               INPUT_BRANCH: ${{ inputs.branch }}
               INPUT_COMMIT: ${{ inputs.commit_sha }}
@@ -139,14 +141,21 @@ runs:
               echo "Commit: $COMMIT"
               echo "Repo: $REPO"
 
-              curl -sS --fail-with-body --retry 3 --retry-delay 2 \
-                -X POST "$BASE$ENDPOINT" \
-                -H "Authorization: Bearer ${{ inputs.ingest_token }}" \
-                -F "branch=$BRANCH" \
-                -F "commit=$COMMIT" \
-                -F "repo=$REPO" \
-                -F "junit=@${{ inputs.junit_path }}" \
-                -F "lcov=@${{ inputs.lcov_path }}" > katalyst-response.json
+              CURL_CMD=(
+                curl -sS --fail-with-body --retry 3 --retry-delay 2
+                -X POST "$BASE$ENDPOINT"
+                -H "Authorization: Bearer ${{ inputs.ingest_token }}"
+                -F "branch=$BRANCH"
+                -F "commit=$COMMIT"
+                -F "repo=$REPO"
+                -F "junit=@${{ inputs.junit_path }}"
+              )
+              
+              if [ -f "${{ inputs.lcov_path }}" ]; then
+                CURL_CMD+=( -F "lcov=@${{ inputs.lcov_path }}" )
+              fi
+              
+              "${CURL_CMD[@]}" > katalyst-response.json
               
               cat katalyst-response.json
               
@@ -171,16 +180,20 @@ runs:
               if [ -n "$PROJECT_ID" ]; then
                 # URL Encode the path to be used as a redirect parameter
                 COVERAGE_PATH="/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
-                # Simple url encoding in bash
-                ENCODED_PATH=$(echo "$COVERAGE_PATH" | jq -sRr @uri)
+                # Simple url encoding in bash, use printf to avoid trailing newline from echo
+                ENCODED_PATH=$(printf "%s" "$COVERAGE_PATH" | jq -sRr @uri)
                 FULL_URL="http://localhost:4200/?redirect=$ENCODED_PATH"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
                 echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
                 
-                # Check if it's a PR and we have a token
-                if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
+                # Check if it's a PR and we have a token. If it's a push event, PR_NUMBER might be empty, so try to find it.
+                if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
+                  PR_NUMBER=$(gh pr list --head "$BRANCH" --json number -q '.[0].number' || echo "")
+                fi
+
+                if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ] && [ -n "$GH_TOKEN" ]; then
                   COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**"
 
                   # Find existing comment
