@@ -194,11 +194,8 @@ runs:
               echo "DEBUG: BRANCH='$BRANCH'"
               
               if [ -n "$PROJECT_ID" ]; then
-                # URL Encode the path to be used as a redirect parameter
-                COVERAGE_PATH="/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
-                # Simple url encoding in bash, use printf to avoid trailing newline from echo
-                ENCODED_PATH=$(printf "%s" "$COVERAGE_PATH" | jq -sRr @uri)
-                FULL_URL="http://localhost:4200/?redirect=$ENCODED_PATH"
+                # Direct URL without redirect parameter
+                FULL_URL="http://localhost:4200/project/$PROJECT_ID/code-coverage"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
