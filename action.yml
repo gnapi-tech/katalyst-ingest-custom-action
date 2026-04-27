@@ -142,7 +142,7 @@ runs:
               echo "Repo: $REPO"
 
               CURL_CMD=(
-                curl -sS --fail-with-body --retry 3 --retry-delay 2
+                curl -sS --retry 3 --retry-delay 2
                 -X POST "$BASE$ENDPOINT"
                 -H "Authorization: Bearer ${{ inputs.ingest_token }}"
                 -F "branch=$BRANCH"
@@ -155,9 +155,11 @@ runs:
                 CURL_CMD+=( -F "lcov=@${{ inputs.lcov_path }}" )
               fi
               
-              
               echo "Executing curl..."
-              HTTP_STATUS=$( "${CURL_CMD[@]}" -w "%{http_code}" -o katalyst-response.json || echo "FAILED" )
+              # Write body to file and capture HTTP status code separately (no --fail-with-body
+              # so curl always exits 0 and HTTP_STATUS always gets the real numeric code)
+              HTTP_STATUS=$( "${CURL_CMD[@]}" -w "%{http_code}" -o katalyst-response.json )
+              CURL_EXIT=$?
               
               echo "HTTP Status: $HTTP_STATUS"
               echo "Response body:"
@@ -171,8 +173,8 @@ runs:
                   echo "api_project_id=$EXTRACTED_PROJECT_ID" >> $GITHUB_ENV
                 fi
               else
-                echo "Failed to upload to Katalyst. HTTP Status: $HTTP_STATUS"
-                # Do not exit here so we don't break subsequent always() steps, but note the failure
+                echo "Failed to upload to Katalyst. HTTP Status: $HTTP_STATUS (curl exit: $CURL_EXIT)"
+                # Continue so always() steps (dashboard link) still run
               fi
 
         - name: Add Dashboard Link to Summary and PR
