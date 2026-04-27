@@ -198,11 +198,11 @@ runs:
               echo "DEBUG: COMMIT='$COMMIT'"
               
               if [ -n "$PROJECT_ID" ]; then
-                FULL_URL="http://localhost:4200/project/$PROJECT_ID/code-coverage"
+                FULL_URL="http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[Code Coverage Dashboard]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
                 
                 # On push events, PR_NUMBER is empty — look it up via the commits API
                 if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
@@ -214,7 +214,7 @@ runs:
                 echo "DEBUG: Final PR_NUMBER='$PR_NUMBER'"
 
                 if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[Code Coverage Dashboard]($FULL_URL)**"
+                  COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**"
 
                   # Find existing comment to update instead of creating a duplicate
                   COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' | tail -n 1)
