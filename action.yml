@@ -169,11 +169,9 @@ runs:
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
               
               if [ -n "$PROJECT_ID" ]; then
-                # URL Encode the path to be used as a redirect parameter
-                COVERAGE_PATH="/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
-                # Simple url encoding in bash
-                ENCODED_PATH=$(echo "$COVERAGE_PATH" | jq -sRr @uri)
-                FULL_URL="http://localhost:4200/?redirect=$ENCODED_PATH"
+                # Ensure the branch name is URL encoded
+                ENCODED_BRANCH=$(echo "$BRANCH" | jq -sRr @uri)
+                FULL_URL="http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$ENCODED_BRANCH"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
