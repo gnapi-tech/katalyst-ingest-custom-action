@@ -24,6 +24,11 @@ inputs:
         required: false
         default: 'http://localhost:4200'
 
+    katalyst_app_url:
+        description: 'Base URL of main Katalyst app (for the dashboard home link), e.g. http://localhost:4200'
+        required: false
+        default: ''
+
     junit_path:
         description: 'Path to JUnit XML report'
         required: false
@@ -96,7 +101,7 @@ runs:
 
         - name: Publish Code Coverage Comment
           uses: zgosalvez/github-actions-report-lcov@v4
-          if: github.event_name == 'pull_request' && always()
+          if: always()
           continue-on-error: true
           with:
             coverage-files: ${{ inputs.lcov_path }}
@@ -131,7 +136,9 @@ runs:
               INPUT_COMMIT: ${{ inputs.commit_sha }}
               INPUT_REPO: ${{ inputs.repo_name }}
           run: |
-              set -euo pipefail
+              # Do NOT use set -e here — if curl or jq fails we still want to
+              # write api_project_id to GITHUB_ENV so the dashboard step can run.
+              set -uo pipefail
 
               BASE="${{ inputs.katalyst_base_url }}"
               BASE="${BASE%/}"
@@ -155,31 +162,36 @@ runs:
                 -F "repo=$REPO"
                 -F "junit=@${{ inputs.junit_path }}"
               )
-              
+
               if [ -f "${{ inputs.lcov_path }}" ]; then
                 CURL_CMD+=( -F "lcov=@${{ inputs.lcov_path }}" )
               fi
-              
+
               echo "Executing curl..."
-              # Write body to file and capture HTTP status code separately (no --fail-with-body
-              # so curl always exits 0 and HTTP_STATUS always gets the real numeric code)
-              HTTP_STATUS=$( "${CURL_CMD[@]}" -w "%{http_code}" -o katalyst-response.json )
-              CURL_EXIT=$?
-              
+              HTTP_STATUS=$( "${CURL_CMD[@]}" -w "%{http_code}" -o katalyst-response.json 2>&1 ) || HTTP_STATUS="000"
+
               echo "HTTP Status: $HTTP_STATUS"
               echo "Response body:"
-              cat katalyst-response.json || echo "No response body found"
-              
+              cat katalyst-response.json 2>/dev/null || echo "No response body found"
+
               if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
-                # Extract projectId from response
-                EXTRACTED_PROJECT_ID=$(jq -r '.projectId // empty' katalyst-response.json)
-                echo "Extracted Project ID: $EXTRACTED_PROJECT_ID"
-                if [ -n "$EXTRACTED_PROJECT_ID" ]; then
-                  echo "api_project_id=$EXTRACTED_PROJECT_ID" >> $GITHUB_ENV
+                # Try common field names the API might return for the project id
+                EXTRACTED_PROJECT_ID=$(jq -r '
+                  .projectId // .project_id // .id // empty
+                ' katalyst-response.json 2>/dev/null || echo "")
+                echo "Extracted Project ID: '$EXTRACTED_PROJECT_ID'"
+                if [ -n "$EXTRACTED_PROJECT_ID" ] && [ "$EXTRACTED_PROJECT_ID" != "null" ]; then
+                  echo "api_project_id=$EXTRACTED_PROJECT_ID" >> "$GITHUB_ENV"
+                  echo "✅ api_project_id written to GITHUB_ENV"
+                else
+                  echo "⚠️  projectId not found in API response. Dashboard link will not be generated."
+                  echo "Full response:"
+                  cat katalyst-response.json 2>/dev/null || true
                 fi
               else
-                echo "Failed to upload to Katalyst. HTTP Status: $HTTP_STATUS (curl exit: $CURL_EXIT)"
-                # Continue so always() steps (dashboard link) still run
+                echo "⚠️  Upload failed. HTTP Status: $HTTP_STATUS — skipping project ID extraction."
+                echo "Full response:"
+                cat katalyst-response.json 2>/dev/null || true
               fi
 
         - name: Add Dashboard Link to Summary and PR
@@ -191,6 +203,7 @@ runs:
               GH_TOKEN: ${{ inputs.github_token }}
               PR_NUMBER: ${{ github.event.pull_request.number }}
               DASHBOARD_BASE_URL: ${{ inputs.dashboard_base_url }}
+              KATALYST_APP_URL: ${{ inputs.katalyst_app_url }}
           run: |
               # Read api_project_id directly from $GITHUB_ENV written by the previous step.
               # Do NOT use ${{ env.api_project_id }} in the YAML env block — in composite actions
@@ -209,10 +222,21 @@ runs:
                 DASHBOARD_BASE_URL="${DASHBOARD_BASE_URL%/}"
                 FULL_URL="$DASHBOARD_BASE_URL/project/$PROJECT_ID/code-coverage"
 
+                # Build main Katalyst app link (falls back to dashboard_base_url if not set)
+                APP_URL="${KATALYST_APP_URL:-$DASHBOARD_BASE_URL}"
+                APP_URL="${APP_URL%/}"
+                KATALYST_LINK="$APP_URL/project/$PROJECT_ID"
+
                 # Write to GITHUB_STEP_SUMMARY
-                echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
-                
+                {
+                  echo "### 🚀 Katalyst Reports"
+                  echo ""
+                  echo "| Report | Link |"
+                  echo "|--------|------|"
+                  echo "| 📊 Code Coverage | [View Coverage for branch \`$BRANCH\`]($FULL_URL) |"
+                  echo "| 🔬 Katalyst Dashboard | [Open Project Dashboard]($KATALYST_LINK) |"
+                } >> $GITHUB_STEP_SUMMARY
+
                 # On push events, PR_NUMBER is empty — use gh pr list to find the open PR
                 if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
                   echo "PR_NUMBER is empty (push event), finding open PR for branch '$BRANCH'..."
@@ -223,11 +247,11 @@ runs:
                 echo "DEBUG: Final PR_NUMBER='$PR_NUMBER'"
 
                 if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY=$(printf '### 📊 Code Coverage Dashboard\n\n🔗 **[View Code Coverage Report for branch `%s`](%s)**' "$BRANCH" "$FULL_URL")
+                  COMMENT_BODY=$(printf '### 🚀 Katalyst Reports\n\n| Report | Link |\n|--------|------|\n| 📊 Code Coverage | [View Coverage for branch `%s`](%s) |\n| 🔬 Katalyst Dashboard | [Open Project Dashboard](%s) |' "$BRANCH" "$FULL_URL" "$KATALYST_LINK")
 
                   # Find existing comment to update instead of creating a duplicate
-                  echo "Searching for existing Code Coverage comment on PR #$PR_NUMBER..."
-                  COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' 2>&1 | tail -n 1)
+                  echo "Searching for existing Katalyst comment on PR #$PR_NUMBER..."
+                  COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | test("^### (🚀 Katalyst Reports|📊 Code Coverage Dashboard)")) | .id' 2>&1 | tail -n 1)
                   echo "Found COMMENT_ID: '$COMMENT_ID'"
                   
                   if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then
