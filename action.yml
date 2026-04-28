@@ -19,6 +19,11 @@ inputs:
         required: false
         default: ''
 
+    dashboard_base_url:
+        description: 'Base URL of Katalyst Dashboard frontend, e.g. http://localhost:4200'
+        required: false
+        default: 'http://localhost:4200'
+
     junit_path:
         description: 'Path to JUnit XML report'
         required: false
@@ -185,6 +190,7 @@ runs:
               INPUT_BRANCH: ${{ inputs.branch }}
               GH_TOKEN: ${{ inputs.github_token }}
               PR_NUMBER: ${{ github.event.pull_request.number }}
+              DASHBOARD_BASE_URL: ${{ inputs.dashboard_base_url }}
           run: |
               # Read api_project_id directly from $GITHUB_ENV written by the previous step.
               # Do NOT use ${{ env.api_project_id }} in the YAML env block — in composite actions
@@ -200,7 +206,8 @@ runs:
               echo "DEBUG: COMMIT='$COMMIT'"
               
               if [ -n "$PROJECT_ID" ]; then
-                FULL_URL="http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
+                DASHBOARD_BASE_URL="${DASHBOARD_BASE_URL%/}"
+                FULL_URL="$DASHBOARD_BASE_URL/project/$PROJECT_ID/code-coverage"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
