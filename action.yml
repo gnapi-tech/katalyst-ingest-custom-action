@@ -49,6 +49,11 @@ inputs:
         required: false
         default: ''
 
+    dashboard_url:
+        description: 'Base URL of the Katalyst frontend dashboard, e.g. http://localhost:4200'
+        required: false
+        default: ''
+
 runs:
     using: 'composite'
     steps:
@@ -162,34 +167,46 @@ runs:
           env:
               INPUT_PROJECT_ID: ${{ inputs.project_id }}
               INPUT_BRANCH: ${{ inputs.branch }}
+              INPUT_DASHBOARD_URL: ${{ inputs.dashboard_url }}
               GH_TOKEN: ${{ inputs.github_token }}
               PR_NUMBER: ${{ github.event.pull_request.number }}
           run: |
               PROJECT_ID="${api_project_id:-$INPUT_PROJECT_ID}"
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
-              
+
+              # Use dashboard_url if provided, otherwise fall back to katalyst_base_url
+              DASH_BASE="${INPUT_DASHBOARD_URL:-${{ inputs.katalyst_base_url }}}"
+              DASH_BASE="${DASH_BASE%/}"
+
               if [ -n "$PROJECT_ID" ]; then
-                # URL Encode the path to be used as a redirect parameter
-                COVERAGE_PATH="/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
-                # Simple url encoding in bash
-                ENCODED_PATH=$(echo "$COVERAGE_PATH" | jq -sRr @uri)
-                FULL_URL="http://localhost:4200/?redirect=$ENCODED_PATH"
+                # Direct link to the coverage page — no redirect wrapper needed
+                FULL_URL="${DASH_BASE}/project/${PROJECT_ID}/code-coverage?branch=${BRANCH}"
 
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
-                
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "🔗 **[View Code Coverage Report for branch \`${BRANCH}\`](${FULL_URL})**" >> $GITHUB_STEP_SUMMARY
+
                 # Check if it's a PR and we have a token
                 if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**"
+                  COMMENT_BODY=$'### \U0001F4CA Code Coverage Dashboard\n\n\U0001F517 **[View Code Coverage Report for branch `'"${BRANCH}"'`]('"${FULL_URL}"')**'
 
-                  # Find existing comment
-                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' | tail -n 1)
-                  
+                  # Find existing comment to update instead of creating a duplicate
+                  COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+                    --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' \
+                    | tail -n 1)
+
                   if [ -n "$COMMENT_ID" ]; then
-                    gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
+                    gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+                      -f body="$COMMENT_BODY"
+                    echo "Updated existing PR comment (id=${COMMENT_ID})"
                   else
-                    gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
+                    gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
+                    echo "Posted new PR comment"
                   fi
+                else
+                  echo "Not a PR event or no GH_TOKEN — skipping PR comment."
                 fi
+              else
+                echo "No project ID available — skipping dashboard link."
               fi
