@@ -15,9 +15,14 @@ inputs:
         required: false
 
     project_id:
-        description: 'Katalyst project ID'
+        description: 'Katalyst project ID (fallback if API does not return one)'
         required: false
         default: ''
+
+    dashboard_url:
+        description: 'Base URL of the Katalyst frontend dashboard, e.g. http://localhost:4200'
+        required: false
+        default: 'http://localhost:4200'
 
     junit_path:
         description: 'Path to JUnit XML report'
@@ -49,11 +54,6 @@ inputs:
         required: false
         default: ''
 
-    dashboard_url:
-        description: 'Base URL of the Katalyst frontend dashboard, e.g. http://localhost:4200'
-        required: false
-        default: ''
-
 runs:
     using: 'composite'
     steps:
@@ -77,12 +77,12 @@ runs:
               fi
 
               if [ ! -f "$LCOV" ]; then
-                echo "LCOV report not found: $LCOV"
-                exit 1
+                echo "LCOV report not found: $LCOV. Proceeding without LCOV."
+              else
+                echo "Found LCOV report: $LCOV"
               fi
 
               echo "Found JUnit report: $JUNIT"
-              echo "Found LCOV report: $LCOV"
 
         - name: Publish Test Report Automation
           uses: mikepenz/action-junit-report@v4
@@ -108,28 +108,29 @@ runs:
           run: |
             if [ -f "katalyst-smells.json" ]; then
               echo "Parsing smells from katalyst-smells.json..."
-              # Using jq to read a JSON report containing { file, line, title, message, severity }
               jq -c '.[]' katalyst-smells.json | while read -r issue; do
                 FILE=$(echo "$issue" | jq -r '.file')
                 LINE=$(echo "$issue" | jq -r '.line')
                 TITLE=$(echo "$issue" | jq -r '.title')
                 MSG=$(echo "$issue" | jq -r '.message')
                 SEVERITY=$(echo "$issue" | jq -r '.severity // "error"')
-                
-                # Dynamically generate the annotation
                 echo "::$SEVERITY file=$FILE,line=$LINE,title=$TITLE::$MSG"
               done
             else
               echo "katalyst-smells.json not found! Skipping dynamic code smell annotations."
             fi
+
         - name: Upload reports to Katalyst
           shell: bash
+          if: always()
           env:
               INPUT_BRANCH: ${{ inputs.branch }}
               INPUT_COMMIT: ${{ inputs.commit_sha }}
               INPUT_REPO: ${{ inputs.repo_name }}
           run: |
-              set -euo pipefail
+              # Do NOT use set -e — if curl or jq fails we must still write
+              # api_project_id to GITHUB_ENV so the dashboard step can generate links.
+              set -uo pipefail
 
               BASE="${{ inputs.katalyst_base_url }}"
               BASE="${BASE%/}"
@@ -140,25 +141,40 @@ runs:
               REPO="${INPUT_REPO:-${GITHUB_REPOSITORY:-}}"
 
               echo "Uploading to: $BASE$ENDPOINT"
-              echo "Branch: $BRANCH"
-              echo "Commit: $COMMIT"
-              echo "Repo: $REPO"
+              echo "Branch: $BRANCH | Commit: $COMMIT | Repo: $REPO"
 
-              curl -sS --fail-with-body --retry 3 --retry-delay 2 \
-                -X POST "$BASE$ENDPOINT" \
-                -H "Authorization: Bearer ${{ inputs.ingest_token }}" \
-                -F "branch=$BRANCH" \
-                -F "commit=$COMMIT" \
-                -F "repo=$REPO" \
-                -F "junit=@${{ inputs.junit_path }}" \
-                -F "lcov=@${{ inputs.lcov_path }}" > katalyst-response.json
-              
-              cat katalyst-response.json
-              
-              # Extract projectId from response
-              EXTRACTED_PROJECT_ID=$(jq -r '.projectId // empty' katalyst-response.json)
-              if [ -n "$EXTRACTED_PROJECT_ID" ]; then
-                echo "api_project_id=$EXTRACTED_PROJECT_ID" >> $GITHUB_ENV
+              CURL_CMD=(
+                curl -sS --retry 3 --retry-delay 2
+                -X POST "$BASE$ENDPOINT"
+                -H "Authorization: Bearer ${{ inputs.ingest_token }}"
+                -F "branch=$BRANCH"
+                -F "commit=$COMMIT"
+                -F "repo=$REPO"
+                -F "junit=@${{ inputs.junit_path }}"
+              )
+
+              if [ -f "${{ inputs.lcov_path }}" ]; then
+                CURL_CMD+=( -F "lcov=@${{ inputs.lcov_path }}" )
+              fi
+
+              echo "Executing curl..."
+              HTTP_STATUS=$( "${CURL_CMD[@]}" -w "%{http_code}" -o katalyst-response.json 2>&1 ) || HTTP_STATUS="000"
+
+              echo "HTTP Status: $HTTP_STATUS"
+              echo "Response body:"
+              cat katalyst-response.json 2>/dev/null || echo "(no response body)"
+
+              if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+                EXTRACTED_PROJECT_ID=$(jq -r '.projectId // .project_id // empty' katalyst-response.json 2>/dev/null || echo "")
+                echo "Extracted Project ID: '$EXTRACTED_PROJECT_ID'"
+                if [ -n "$EXTRACTED_PROJECT_ID" ] && [ "$EXTRACTED_PROJECT_ID" != "null" ]; then
+                  echo "api_project_id=$EXTRACTED_PROJECT_ID" >> "$GITHUB_ENV"
+                  echo "✅ api_project_id written to GITHUB_ENV"
+                else
+                  echo "⚠️  projectId not found in API response — dashboard link will be skipped unless project_id input is set."
+                fi
+              else
+                echo "⚠️  Upload failed (HTTP $HTTP_STATUS) — skipping project ID extraction."
               fi
 
         - name: Add Dashboard Link to Summary and PR
@@ -169,26 +185,70 @@ runs:
               INPUT_BRANCH: ${{ inputs.branch }}
               GH_TOKEN: ${{ inputs.github_token }}
               PR_NUMBER: ${{ github.event.pull_request.number }}
+              KATALYST_DASHBOARD_URL: ${{ inputs.dashboard_url }}
           run: |
+              # api_project_id is read from $GITHUB_ENV (written by previous step).
+              # Do NOT use ${{ env.api_project_id }} in the YAML env block above —
+              # in composite actions that expression evaluates before the step runs.
               PROJECT_ID="${api_project_id:-$INPUT_PROJECT_ID}"
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
+              BASE_URL="${KATALYST_DASHBOARD_URL:-http://localhost:4200}"
+              BASE_URL="${BASE_URL%/}"
 
-              if [ -n "$PROJECT_ID" ]; then
-                # Write to GITHUB_STEP_SUMMARY
-                echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+              echo "DEBUG: PROJECT_ID='$PROJECT_ID'"
+              echo "DEBUG: BRANCH='$BRANCH'"
+              echo "DEBUG: BASE_URL='$BASE_URL'"
+              echo "DEBUG: PR_NUMBER='$PR_NUMBER'"
 
-                # Check if it's a PR and we have a token
-                if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY="### 📊 Katalyst Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**"
+              if [ -z "$PROJECT_ID" ]; then
+                echo "Skipping dashboard link: PROJECT_ID is empty."
+                exit 0
+              fi
 
-                  # Find existing comment
-                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Katalyst Dashboard")) | .id' | tail -n 1)
+              # Direct code-coverage URL
+              COVERAGE_URL="$BASE_URL/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
 
-                  if [ -n "$COMMENT_ID" ]; then
-                    gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
-                  else
-                    gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
-                  fi
-                fi
+              # Auth-redirect URL (for users not yet logged in)
+              ENCODED_PATH=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "/project/$PROJECT_ID/code-coverage?branch=$BRANCH")
+              REDIRECT_URL="$BASE_URL/?redirect=$ENCODED_PATH"
+
+              echo "Coverage URL: $COVERAGE_URL"
+              echo "Redirect URL: $REDIRECT_URL"
+
+              # Write to GITHUB_STEP_SUMMARY
+              {
+                echo "### 📊 Katalyst Dashboard"
+                echo ""
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($COVERAGE_URL)**"
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              # On push events, PR_NUMBER is empty — find the open PR for this branch
+              if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
+                echo "Push event detected — looking up open PR for branch '$BRANCH'..."
+                PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+                echo "Found PR_NUMBER: '$PR_NUMBER'"
+              fi
+
+              if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ] || [ -z "$GH_TOKEN" ]; then
+                echo "Skipping PR comment: no open PR found or GH_TOKEN missing."
+                exit 0
+              fi
+
+              # Build comment body (newlines via printf, NOT <br>)
+              COMMENT_BODY=$(printf '### 📊 Katalyst Dashboard\n\n🔗 **[View Code Coverage Report for branch `%s`](%s)**' "$BRANCH" "$COVERAGE_URL")
+
+              # Update existing comment or create a new one
+              COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+                --jq '.[] | select(.body | startswith("### 📊 Katalyst Dashboard")) | .id' 2>/dev/null | tail -n 1 || echo "")
+
+              echo "Existing COMMENT_ID: '$COMMENT_ID'"
+
+              if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then
+                echo "Updating existing comment $COMMENT_ID..."
+                gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$COMMENT_ID" \
+                  -f body="$COMMENT_BODY" && echo "✅ Comment updated." || echo "❌ Failed to update comment."
+              else
+                echo "Creating new PR comment..."
+                gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" \
+                  --body "$COMMENT_BODY" && echo "✅ Comment created." || echo "❌ Failed to create comment."
               fi
