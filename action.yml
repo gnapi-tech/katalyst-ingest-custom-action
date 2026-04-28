@@ -206,28 +206,29 @@ runs:
                 echo "### 📊 Code Coverage Dashboard" >> $GITHUB_STEP_SUMMARY
                 echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**" >> $GITHUB_STEP_SUMMARY
                 
-                # On push events, PR_NUMBER is empty — look it up via the commits API
+                # On push events, PR_NUMBER is empty — use gh pr list to find the open PR
                 if [ -z "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
-                  echo "PR_NUMBER is empty, attempting to find open PR for commit '$COMMIT'..."
-                  PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/$COMMIT/pulls --jq '.[0].number' || echo "")
-                  echo "Found PR_NUMBER via gh api: '$PR_NUMBER'"
+                  echo "PR_NUMBER is empty (push event), finding open PR for branch '$BRANCH'..."
+                  PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>&1 || echo "")
+                  echo "Found PR_NUMBER via gh pr list: '$PR_NUMBER'"
                 fi
 
                 echo "DEBUG: Final PR_NUMBER='$PR_NUMBER'"
 
                 if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ] && [ -n "$GH_TOKEN" ]; then
-                  COMMENT_BODY="### 📊 Code Coverage Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($FULL_URL)**"
+                  COMMENT_BODY=$(printf '### 📊 Code Coverage Dashboard\n\n🔗 **[View Code Coverage Report for branch `%s`](%s)**' "$BRANCH" "$FULL_URL")
 
                   # Find existing comment to update instead of creating a duplicate
-                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' | tail -n 1)
+                  echo "Searching for existing Code Coverage comment on PR #$PR_NUMBER..."
+                  COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("### 📊 Code Coverage Dashboard")) | .id' 2>&1 | tail -n 1)
                   echo "Found COMMENT_ID: '$COMMENT_ID'"
                   
-                  if [ -n "$COMMENT_ID" ]; then
-                    echo "Updating existing PR comment..."
-                    gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
+                  if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then
+                    echo "Updating existing PR comment $COMMENT_ID..."
+                    gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$COMMENT_ID" -f body="$COMMENT_BODY" && echo "Comment updated." || echo "ERROR: Failed to update comment."
                   else
                     echo "Creating new PR comment..."
-                    gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
+                    gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body "$COMMENT_BODY" && echo "Comment created." || echo "ERROR: Failed to create comment."
                   fi
                 else
                   echo "Skipping PR comment: PR_NUMBER or GH_TOKEN is missing."
