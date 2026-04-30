@@ -49,8 +49,8 @@ inputs:
         required: false
         default: ''
 
-    dashboard_base_url:
-        description: 'Base URL of the Katalyst Dashboard UI, e.g. https://dashboard.example.com'
+    repo_owner:
+        description: 'GitHub repository owner'
         required: false
         default: ''
 
@@ -161,70 +161,36 @@ runs:
                 echo "api_project_id=$EXTRACTED_PROJECT_ID" >> $GITHUB_ENV
               fi
 
-        - name: Add Dashboard Link to Summary
+        - name: Add Dashboard Link to Summary and PR
           shell: bash
           if: always()
           env:
               INPUT_PROJECT_ID: ${{ inputs.project_id }}
               INPUT_BRANCH: ${{ inputs.branch }}
-              INPUT_DASHBOARD_URL: ${{ inputs.dashboard_base_url }}
+              GH_TOKEN: ${{ inputs.github_token }}
+              PR_NUMBER: ${{ github.event.pull_request.number }}
           run: |
               PROJECT_ID="${api_project_id:-$INPUT_PROJECT_ID}"
               BRANCH="${INPUT_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
-              DASHBOARD_BASE="${INPUT_DASHBOARD_URL%/}"
+              
+              if [ -n "$PROJECT_ID" ]; then
 
-              if [ -n "$PROJECT_ID" ] && [ -n "$DASHBOARD_BASE" ]; then
-                DASHBOARD_LINK="$DASHBOARD_BASE/project/$PROJECT_ID/code-coverage?branch=$BRANCH"
+
                 # Write to GITHUB_STEP_SUMMARY
                 echo "### 📊 Katalyst Dashboard" >> $GITHUB_STEP_SUMMARY
-                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`]($DASHBOARD_LINK)**" >> $GITHUB_STEP_SUMMARY
-              fi
+                echo "🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**" >> $GITHUB_STEP_SUMMARY
+                
+                # Check if it's a PR and we have a token
+                if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
+                  COMMENT_BODY="### 📊 Katalyst Dashboard<br><br>🔗 **[View Code Coverage Report for branch \`$BRANCH\`](http://localhost:4200/project/$PROJECT_ID/code-coverage?branch=$BRANCH)**"
 
-        - name: Add Dashboard Link to PR Comment
-          uses: actions/github-script@v7
-          if: github.event_name == 'pull_request' && always()
-          env:
-            INPUT_PROJECT_ID: ${{ inputs.project_id }}
-            INPUT_BRANCH: ${{ inputs.branch }}
-            INPUT_DASHBOARD_URL: ${{ inputs.dashboard_base_url }}
-          with:
-            github-token: ${{ inputs.github_token }}
-            script: |
-              const projectId = process.env.api_project_id || process.env.INPUT_PROJECT_ID;
-              const branch = process.env.INPUT_BRANCH || process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
-              let dashboardBase = process.env.INPUT_DASHBOARD_URL;
-              
-              if (!projectId || !dashboardBase) {
-                console.log('Missing project ID or dashboard URL. Skipping PR comment.');
-                return;
-              }
-              
-              dashboardBase = dashboardBase.replace(/\/$/, '');
-              const dashboardLink = `${dashboardBase}/project/${projectId}/code-coverage?branch=${branch}`;
-              const commentBody = `### 📊 Katalyst Dashboard\n\n🔗 **[View Code Coverage Report for branch \`${branch}\`](${dashboardLink})**`;
-              
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-              
-              const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes('### 📊 Katalyst Dashboard'));
-              
-              if (botComment) {
-                console.log(`Updating existing comment ${botComment.id}`);
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: botComment.id,
-                  body: commentBody
-                });
-              } else {
-                console.log('Creating new comment');
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: commentBody
-                });
-              }
+                  # Find existing comment
+                  COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq '.[] | select(.body | startswith("### 📊 Katalyst Dashboard")) | .id' | tail -n 1)
+                  
+                  if [ -n "$COMMENT_ID" ]; then
+                    gh api -X PATCH repos/${{ github.repository }}/issues/comments/$COMMENT_ID -f body="$COMMENT_BODY"
+                  else
+                    gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
+                  fi
+                fi
+              fi
